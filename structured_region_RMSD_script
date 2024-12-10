@@ -1,0 +1,90 @@
+import os
+import pandas as pd
+import numpy as np
+import glob
+
+input_excel = "/input_file_path/input_Excel_file.xlsx" #file path for input Excel file designating structured region ranges
+folder1 = "/input_PDB_folder1_path/" #folder path for input folder containing individual PDB files of the 1st conformational ensemble
+folder2 = "/input_PDB_folder2_path/" #folder path for input folder containing individual PDB files of the 2nd conformational ensemble
+output_folder = "/output_folder_path" #folder path for output Excel file
+os.makedirs(output_folder, exist_ok=True)
+
+def calculate_rmsd(pdb_file1, pdb_file2, range1, range2):
+    def parse_pdb(file, atom_range):
+        coords = []
+        with open(file, 'r') as f:
+            for line in f:
+                if line.startswith("ATOM") and line[12:16].strip() == "CA":
+                    residue_number = int(line[22:26].strip())
+                    if atom_range[0] <= residue_number <= atom_range[1]:
+                        coords.append([float(line[30:38]), float(line[38:46]), float(line[46:54])])
+        return np.array(coords)
+    coords1 = parse_pdb(pdb_file1, range1)
+    coords2 = parse_pdb(pdb_file2, range2)
+    if coords1.shape[0] != coords2.shape[0]:
+        raise ValueError(f"PDB files {pdb_file1} and {pdb_file2} do not have the same number of specified CA atoms")
+    centroid1 = np.mean(coords1, axis=0)
+    centroid2 = np.mean(coords2, axis=0)
+    coords1 -= centroid1
+    coords2 -= centroid2
+    cov_matrix = np.dot(coords2.T, coords1)
+    V, S, Wt = np.linalg.svd(cov_matrix)
+    d = (np.linalg.det(V) * np.linalg.det(Wt)) < 0.0
+    if d:
+        S[-1] = -S[-1]
+        V[:, -1] = -V[:, -1]
+    rotation_matrix = np.dot(V, Wt)
+    coords2_rot = np.dot(coords2, rotation_matrix)
+    diff = coords1 - coords2_rot
+    rmsd = np.sqrt((diff ** 2).sum() / len(coords1))
+    return rmsd
+
+def main(input_excel, folder1, folder2, output_folder):
+    data = pd.read_excel(input_excel)
+    # Process only the first row
+    row = data.iloc[0]
+    pdb_id = row["PDB_ID"]
+    folder1_range = row["Folder 1 Range"]
+    folder2_range = row["Folder 2 Range"]
+    try:
+        range1 = tuple(map(int, folder1_range.split('-')))
+        range2 = tuple(map(int, folder2_range.split('-')))
+    except ValueError:
+        print(f"Invalid range format for PDB ID {pdb_id}: {folder1_range}, {folder2_range}")
+        return
+    pdb_files1 = sorted(glob.glob(os.path.join(folder1, f"{pdb_id}*.pdb")))
+    pdb_files2 = sorted(glob.glob(os.path.join(folder2, f"{pdb_id}*.pdb")))
+    if not pdb_files1 or not pdb_files2:
+        print(f"No PDB files found for PDB ID {pdb_id} in one or both folders")
+        return
+    subfolder_results = []
+    total_rmsd = 0
+    num_calculations = 0
+    for pdb_file1 in pdb_files1:
+        for pdb_file2 in pdb_files2:
+            try:
+                rmsd = calculate_rmsd(pdb_file1, pdb_file2, range1, range2)
+                total_rmsd += rmsd
+                num_calculations += 1
+                subfolder_results.append({
+                    "PDB file 1": os.path.basename(pdb_file1),
+                    "PDB file 2": os.path.basename(pdb_file2),
+                    "PDB file 1 structured range": f"{range1[0]}-{range1[1]}",
+                    "PDB file 2 structured range": f"{range2[0]}-{range2[1]}",
+                    "RMSD": rmsd
+                })
+            except Exception as e:
+                print(f"Error processing {os.path.basename(pdb_file1)} and {os.path.basename(pdb_file2)}: {e}")
+    if num_calculations > 0:
+        avg_rmsd = total_rmsd / num_calculations
+        for result in subfolder_results:
+            result["average RMSD"] = ""
+        if subfolder_results:
+            subfolder_results[0]["average RMSD"] = avg_rmsd
+        subfolder_df = pd.DataFrame(subfolder_results)
+        output_file = os.path.join(output_folder, f"{pdb_id} RMSD comparison.xlsx")
+        subfolder_df.to_excel(output_file, index=False)
+        print(f"Saved RMSD results for {pdb_id} to {output_file}")
+
+if __name__ == "__main__":
+    main(input_excel, folder1, folder2, output_folder)
