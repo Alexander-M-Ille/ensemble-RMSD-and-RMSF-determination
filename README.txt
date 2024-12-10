@@ -1,5 +1,7 @@
 README
 
+The Python scripts presented here are custom versions of the RMSD and RMSF determination scripts originally from the CHARMM-GUI lecture series, available online at www.charmm-gui.org/?doc=lecture&module=scientific&lesson=11 and www.charmm-gui.org/?doc=lecture&module=scientific&lesson=12
+
 ---------------------------------------------------------------
 Structured Region RMSD Script
 ---------------------------------------------------------------
